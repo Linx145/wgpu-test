@@ -1,6 +1,7 @@
 #ifndef FRAMEWORK_H
 #define FRAMEWORK_H
 
+#include "webgpu-headers/webgpu.h"
 #include "wgpu.h"
 
 #define UNUSED(x) (void)x;
@@ -14,10 +15,18 @@ typedef struct Texture2D {
   int32_t w;
   int32_t h;
   int32_t n;
+
+  WGPUTexture texture;
+  WGPUTextureView view;
 } Texture2D;
 
-Texture2D frmwrk_load_texture2D(const char *name);
+Texture2D frmwrk_load_texture2D(WGPUDevice device, const char *name);
 
-
+typedef struct vec4 {
+  float index;
+  float unused1;
+  float unused2;
+  float unused3;
+} vec4;
 
 #endif // FRAMEWORK_H

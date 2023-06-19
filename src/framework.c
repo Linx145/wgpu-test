@@ -36,19 +36,89 @@ void frmwrk_setup_logging(WGPULogLevel level) {
   wgpuSetLogLevel(level);
 }
 
-Texture2D frmwrk_load_texture2D(const char *name)
+Texture2D frmwrk_load_texture2D(WGPUDevice device, const char *name)
 {
   unsigned char *data;
   int w;
   int h;
   int channels;
   data = stbi_load(name, &w, &h, &channels, 0);
+  
+  WGPUTextureFormat textureFormat = WGPUTextureFormat_RGBA8Unorm;
+
+  WGPUTextureDescriptor textureDescriptor = (WGPUTextureDescriptor){
+    .dimension = WGPUTextureDimension_2D,
+    .format = textureFormat,
+    .size = (WGPUExtent3D){
+      .width = w,
+      .height = h,
+      .depthOrArrayLayers = 1
+    },
+    .usage = WGPUTextureUsage_CopyDst | WGPUTextureUsage_TextureBinding,
+    .mipLevelCount = 1,
+    .sampleCount = 1,
+    .viewFormats = &textureFormat,
+    .viewFormatCount = 1,
+    .label = name
+  };
+  WGPUTexture texture = wgpuDeviceCreateTexture(device, &textureDescriptor);
+
+  WGPUTextureViewDescriptor textureViewDescriptor = (WGPUTextureViewDescriptor){
+    .format = textureFormat,
+    .dimension = WGPUTextureViewDimension_2D,
+    .aspect = WGPUTextureAspect_All,
+    .mipLevelCount = 1,
+    .baseMipLevel = 0,
+    .arrayLayerCount = 1,
+    .baseArrayLayer = 0,
+    .label = name
+  };
+
+  WGPUTextureView textureView = wgpuTextureCreateView(texture, &textureViewDescriptor);
+
+  //fill up texture
+  {
+    WGPUImageCopyTexture copyTexture = (WGPUImageCopyTexture){
+      .texture = texture,
+      .aspect = WGPUTextureAspect_All,
+      .mipLevel = 0,
+      .origin = (WGPUOrigin3D) {
+        .x = 0,
+        .y = 0,
+        .z = 0
+      }
+    };
+
+    WGPUTextureDataLayout dataLayout = (WGPUTextureDataLayout){
+        .bytesPerRow = w * channels,
+        .rowsPerImage = h
+    };
+    WGPUExtent3D dataExtents = (WGPUExtent3D){
+      .width = w,
+      .height = h,
+      .depthOrArrayLayers = 1
+    };
+
+    WGPUQueue queue = wgpuDeviceGetQueue(device);
+    WGPUCommandEncoder cmdEncoder = wgpuDeviceCreateCommandEncoder(device, &(const WGPUCommandEncoderDescriptor){
+                         .label = "command_encoder",
+                     });
+    wgpuQueueWriteTexture(queue, &copyTexture, data, w * h * channels, &dataLayout, &dataExtents);
+
+    WGPUCommandBuffer cmdBuffer = wgpuCommandEncoderFinish(cmdEncoder, &(const WGPUCommandBufferDescriptor){
+                             .label = "command_buffer",
+                         });
+
+    wgpuQueueSubmit(queue, 1, &cmdBuffer);
+  }
 
   Texture2D result = (Texture2D){
     .data = data,
     .w = w,
     .h = h,
-    .n = channels
+    .n = channels,
+    .texture = texture,
+    .view = textureView
   };
   return result;
 }

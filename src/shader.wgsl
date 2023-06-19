@@ -36,12 +36,11 @@ fn vs_main(
 }
 
 //The texture we're sampling
-@group(0) @binding(0) var t: array<texture_2d<f32>, 2>;
+@group(0) @binding(0) var t: binding_array<texture_2d<f32>, 2>;
 //The sampler we're using to sample the texture
 @group(0) @binding(1) var s: sampler;
-@group(0) @binding(2) var<uniform> textureID: vec4<int>
 
 @fragment
 fn fs_main(input: FragmentInputs) -> @location(0) vec4<f32> {
-    return textureSample(t[textureID.x], s, input.tex_coord);
+    return textureSample(t[1], s, input.tex_coord);
 }
