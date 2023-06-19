@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "stb_image.h"
 
 static void log_callback(WGPULogLevel level, char const *message,
                          void *userdata) {
@@ -33,6 +34,23 @@ static void log_callback(WGPULogLevel level, char const *message,
 void frmwrk_setup_logging(WGPULogLevel level) {
   wgpuSetLogCallback(log_callback, NULL);
   wgpuSetLogLevel(level);
+}
+
+Texture2D frmwrk_load_texture2D(const char *name)
+{
+  unsigned char *data;
+  int w;
+  int h;
+  int channels;
+  data = stbi_load(name, &w, &h, &channels, 0);
+
+  Texture2D result = (Texture2D){
+    .data = data,
+    .w = w,
+    .h = h,
+    .n = channels
+  };
+  return result;
 }
 
 WGPUShaderModule frmwrk_load_shader_module(WGPUDevice device,

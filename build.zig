@@ -1,4 +1,5 @@
 const std = @import("std");
+const glfw = @import("mach-glfw/build.zig");
 
 inline fn thisDir() []const u8 {
     return comptime std.fs.path.dirname(@src().file) orelse ".";
@@ -6,7 +7,7 @@ inline fn thisDir() []const u8 {
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
 // runner.
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     const cflags = [_][]const u8{"-fstrict-aliasing"};
 
     // Standard target options allows the person running `zig build` to choose
@@ -29,29 +30,31 @@ pub fn build(b: *std.Build) void {
 
     exe.linkLibC();
     exe.linkLibCpp();
-    exe.addLibraryPath(thisDir() ++ "/../system-sdk/windows/lib/x86_64-windows-gnu");
-    exe.addLibraryPath("C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.35.32215/lib/x64");
+    try glfw.link(b, exe, .{});
+
+    {//wgpu
+        exe.addLibraryPath("include");
+        exe.linkSystemLibrary("wgpu_native");
+
+        if (target.isWindows())
+        {
+            //exe.addLibraryPath("C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.35.32215/lib/x64");
+
+            exe.linkSystemLibrary("ws2_32");
+            exe.linkSystemLibrary("userenv");
+            exe.linkSystemLibrary("bcrypt");
+            exe.linkSystemLibrary("d3dcompiler_47");
+            b.installFile("include/wgpu_native.dll", "bin/wgpu_native.dll");
+        }
+    }
+    exe.addIncludePath("include");
 
     exe.addIncludePath("src");
     exe.addCSourceFile("src/framework.c", &cflags);
     exe.addCSourceFile("src/Program.c", &cflags);
-    exe.addIncludePath("include");
-    exe.addLibraryPath("include");
-    exe.addLibraryPath("include/deps");
-    exe.linkSystemLibrary("wgpu_native");
-    exe.linkSystemLibrary("glfw3");
-    if (target.isWindows())
-    {
-        exe.linkSystemLibrary("gdi32");
-        exe.linkSystemLibrary("user32");
-        exe.linkSystemLibrary("shell32");
 
-        exe.linkSystemLibrary("ws2_32");
-        exe.linkSystemLibrary("userenv");
-        exe.linkSystemLibrary("bcrypt");
-        exe.linkSystemLibrary("d3dcompiler_47");
-        b.installFile("include/wgpu_native.dll", "bin/wgpu_native.dll");
-    }
+    b.installFile("src/shader.wgsl", "bin/shader.wgsl");
+
     exe.want_lto = false;
     //exe.linkSystemLibrary("glfw3");
 

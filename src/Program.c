@@ -12,18 +12,6 @@
 #define LOG_PREFIX "[triangle]"
 #define WGPU_TARGET_WINDOWS 1
 
-#define SHADER_CODE "@vertex\
-fn vs_main(@builtin(vertex_index) in_vertex_index: u32) -> @builtin(position) vec4<f32> {\
-    let x = f32(i32(in_vertex_index) - 1);\
-    let y = f32(i32(in_vertex_index & 1u) * 2 - 1);\
-    return vec4<f32>(x, y, 0.0, 1.0);\
-}\
-\
-@fragment\
-fn fs_main() -> @location(0) vec4<f32> {\
-    return vec4<f32>(1.0, 0.0, 0.0, 1.0);\
-}"
-
 struct demo {
   WGPUInstance instance;
   WGPUSurface surface;
@@ -31,6 +19,15 @@ struct demo {
   WGPUDevice device;
   WGPUSwapChainDescriptor config;
   WGPUSwapChain swapchain;
+
+  WGPUBindGroup textureBindGroup;
+  WGPUBindGroupLayout textureBindGroupLayout;
+  Texture2D tbh;
+
+  WGPUTexture wgpuTexture;
+  WGPUTextureView wgpuTextureView;
+  WGPUSampler sampler;
+  WGPUBuffer indexBuffer;
 };
 
 static void handle_request_adapter(WGPURequestAdapterStatus status,
@@ -144,6 +141,8 @@ int main(int argc, char *argv[]) {
   glfwSetKeyCallback(window, handle_glfw_key);
   glfwSetFramebufferSizeCallback(window, handle_glfw_framebuffer_size);
 
+  const char *imgPath = "tbh.png";
+
 #if defined(WGPU_TARGET_MACOS)
   {
     id metal_layer = NULL;
@@ -248,31 +247,215 @@ int main(int argc, char *argv[]) {
                                        NULL);
   wgpuDeviceSetDeviceLostCallback(demo.device, handle_device_lost, NULL);
 
-  shader_module = wgpuDeviceCreateShaderModule(
-      demo.device, &(const WGPUShaderModuleDescriptor){
-                  .label = "shader.wgsl",
-                  .nextInChain =
-                      (const WGPUChainedStruct *)&(
-                          const WGPUShaderModuleWGSLDescriptor){
-                          .chain =
-                              (const WGPUChainedStruct){
-                                  .sType = WGPUSType_ShaderModuleWGSLDescriptor,
-                              },
-                          .code = SHADER_CODE,
-                      },
-              });
-              //frmwrk_load_shader_module(demo.device, "shader.wgsl");
+  shader_module = frmwrk_load_shader_module(demo.device, "shader.wgsl");
   ASSERT_CHECK(shader_module);
 
-  pipeline_layout = wgpuDeviceCreatePipelineLayout(
-      demo.device, &(const WGPUPipelineLayoutDescriptor){
-                       .label = "pipeline_layout",
-                   });
-  ASSERT_CHECK(pipeline_layout);
-
+  #pragma region swapchain
   WGPUTextureFormat surface_preferred_format =
       wgpuSurfaceGetPreferredFormat(demo.surface, demo.adapter);
   ASSERT_CHECK(surface_preferred_format != WGPUTextureFormat_Undefined);
+
+  demo.config = (WGPUSwapChainDescriptor){
+      .usage = WGPUTextureUsage_RenderAttachment,
+      .format = surface_preferred_format,
+      .presentMode = WGPUPresentMode_Fifo,
+  };
+
+  {
+    int width, height;
+    glfwGetWindowSize(window, &width, &height);
+    demo.config.width = width;
+    demo.config.height = height;
+  }
+
+  demo.swapchain =
+      wgpuDeviceCreateSwapChain(demo.device, demo.surface, &demo.config);
+  ASSERT_CHECK(demo.swapchain);
+  #pragma endregion
+
+  #pragma region load textures
+  printf("loading texture\n");
+  demo.tbh = frmwrk_load_texture2D(imgPath);
+  printf("loaded texture width: ");
+  printf("%d", demo.tbh.w);
+  printf(", height: ");
+  printf("%d", demo.tbh.h);
+  printf(", channels: ");
+  printf("%d", demo.tbh.n);
+  printf("\n");
+
+  WGPUTextureFormat textureFormat = WGPUTextureFormat_RGBA8Unorm;
+
+  WGPUTextureDescriptor textureDescriptor = (WGPUTextureDescriptor){
+    .dimension = WGPUTextureDimension_2D,
+    .format = textureFormat,
+    .size = (WGPUExtent3D){
+      .width = demo.tbh.w,
+      .height = demo.tbh.h,
+      .depthOrArrayLayers = 1
+    },
+    .usage = WGPUTextureUsage_CopyDst | WGPUTextureUsage_TextureBinding,
+    .mipLevelCount = 1,
+    .sampleCount = 1,
+    .viewFormats = &textureFormat,
+    .viewFormatCount = 1
+  };
+
+  printf("device creating texture\n");
+  demo.wgpuTexture = wgpuDeviceCreateTexture(demo.device, &textureDescriptor);
+  ASSERT_CHECK(demo.wgpuTexture);
+
+  WGPUTextureViewDescriptor textureViewDescriptor = (WGPUTextureViewDescriptor){
+    .format = textureFormat,
+    .dimension = WGPUTextureViewDimension_2D,
+    .aspect = WGPUTextureAspect_All,
+    .mipLevelCount = 1,
+    .baseMipLevel = 0,
+    .arrayLayerCount = 1,
+    .baseArrayLayer = 0
+  };
+
+  demo.wgpuTextureView = wgpuTextureCreateView(demo.wgpuTexture, &textureViewDescriptor);
+  ASSERT_CHECK(demo.wgpuTextureView);
+
+  //fill up texture
+  printf("copy texture\n");
+  {
+    WGPUImageCopyTexture copyTexture = (WGPUImageCopyTexture){
+      .texture = demo.wgpuTexture,
+      .aspect = WGPUTextureAspect_All,
+      .mipLevel = 0,
+      .origin = (WGPUOrigin3D) {
+        .x = 0,
+        .y = 0,
+        .z = 0
+      }
+    };
+    printf("creating texture data layout\n");
+
+    WGPUTextureDataLayout dataLayout = (WGPUTextureDataLayout){
+        .bytesPerRow = demo.tbh.w * demo.tbh.n,
+        .rowsPerImage = demo.tbh.h
+    };
+    WGPUExtent3D dataExtents = (WGPUExtent3D){
+      .width = demo.tbh.w,
+      .height = demo.tbh.h,
+      .depthOrArrayLayers = 1
+    };
+
+    printf("Getting queue\n");
+    WGPUQueue queue = wgpuDeviceGetQueue(demo.device);
+    WGPUCommandEncoder cmdEncoder = wgpuDeviceCreateCommandEncoder(demo.device, &(const WGPUCommandEncoderDescriptor){
+                         .label = "command_encoder",
+                     });
+    ASSERT_CHECK(cmdEncoder);
+    printf("writing texture\n");
+    wgpuQueueWriteTexture(queue, &copyTexture, demo.tbh.data, demo.tbh.w * demo.tbh.h * demo.tbh.n, &dataLayout, &dataExtents);
+
+    printf("finishing command encoder\n");
+    WGPUCommandBuffer cmdBuffer = wgpuCommandEncoderFinish(cmdEncoder, &(const WGPUCommandBufferDescriptor){
+                             .label = "command_buffer",
+                         });
+    ASSERT_CHECK(cmdBuffer);
+
+    printf("submitting texture write queue\n");
+    wgpuQueueSubmit(queue, 1, &cmdBuffer);
+  }
+#pragma endregion
+
+  printf("creating sampler\n");
+#pragma region create sampler
+  {
+    WGPUSamplerDescriptor samplerDescriptor = (WGPUSamplerDescriptor){
+      .compare = WGPUCompareFunction_Undefined,
+      .mipmapFilter = WGPUMipmapFilterMode_Nearest,
+      .minFilter = WGPUFilterMode_Nearest,
+      .magFilter = WGPUFilterMode_Nearest,
+      .addressModeU = WGPUAddressMode_ClampToEdge,
+      .addressModeV = WGPUAddressMode_ClampToEdge,
+      .addressModeW = WGPUAddressMode_ClampToEdge,
+      .maxAnisotropy = 1,
+      .lodMinClamp = 0.0f,
+      .lodMaxClamp = 1.0f
+    };
+
+    demo.sampler = wgpuDeviceCreateSampler(demo.device, &samplerDescriptor);
+    ASSERT_CHECK(demo.sampler);
+  }
+#pragma endregion
+
+  printf("creating bindgroup\n");
+#pragma region bindgroup
+  WGPUBindGroupLayoutEntry bindGroupLayoutEntries[] = {
+    (WGPUBindGroupLayoutEntry) {
+      .binding = 0,
+      .texture = (WGPUTextureBindingLayout) {
+        .multisampled = false,
+        .sampleType = WGPUTextureSampleType_Float,
+        .viewDimension = WGPUTextureViewDimension_2D
+      },
+      .visibility = WGPUShaderStage_Fragment
+    },
+    (WGPUBindGroupLayoutEntry) {
+      .binding = 1,
+      .sampler = (WGPUSamplerBindingLayout) {
+        .type = WGPUSamplerBindingType_Filtering
+      },
+      .visibility = WGPUShaderStage_Fragment
+    }
+  };
+
+  WGPUBindGroupLayoutDescriptor bindGroupLayoutDescriptor = (WGPUBindGroupLayoutDescriptor){
+    .entries = bindGroupLayoutEntries,
+    .entryCount = 2
+  };
+
+  demo.textureBindGroupLayout = wgpuDeviceCreateBindGroupLayout(demo.device, &bindGroupLayoutDescriptor);
+  ASSERT_CHECK(demo.textureBindGroupLayout);
+
+  WGPUBindGroupEntry bindGroupEntries[] = {
+    (WGPUBindGroupEntry) {
+      .binding = 0,
+      .textureView = demo.wgpuTextureView
+    },
+    (WGPUBindGroupEntry) {
+      .binding = 1,
+      .sampler = demo.sampler
+    }
+  };
+
+  WGPUBindGroupDescriptor bindGroupDescriptor = (WGPUBindGroupDescriptor){
+    .entries = bindGroupEntries,
+    .entryCount = 2,
+    .layout = demo.textureBindGroupLayout
+  };
+  demo.textureBindGroup = wgpuDeviceCreateBindGroup(demo.device, &bindGroupDescriptor);
+  ASSERT_CHECK(demo.textureBindGroup);
+
+  #pragma endregion
+
+  #pragma region pipeline
+  {
+    WGPUBlendState blendState = (WGPUBlendState){
+      .color = (WGPUBlendComponent){
+        .srcFactor = WGPUBlendFactor_SrcAlpha,
+        .dstFactor = WGPUBlendFactor_OneMinusSrcAlpha,
+        .operation = WGPUBlendOperation_Add
+      },
+      .alpha = (WGPUBlendComponent){
+        .srcFactor = WGPUBlendFactor_SrcAlpha,
+        .dstFactor = WGPUBlendFactor_OneMinusSrcAlpha,
+        .operation = WGPUBlendOperation_Add
+      }
+    };
+
+    pipeline_layout = wgpuDeviceCreatePipelineLayout(
+      demo.device, &(const WGPUPipelineLayoutDescriptor){
+                       .label = "pipeline_layout",
+                       .bindGroupLayoutCount = 1,
+                       .bindGroupLayouts = &demo.textureBindGroupLayout
+                   });
+    ASSERT_CHECK(pipeline_layout);
 
   render_pipeline = wgpuDeviceCreateRenderPipeline(
       demo.device, &(const WGPURenderPipelineDescriptor){
@@ -292,6 +475,7 @@ int main(int argc, char *argv[]) {
                                    (const WGPUColorTargetState[]){
                                        (const WGPUColorTargetState){
                                            .format = surface_preferred_format,
+                                           .blend = &blendState,
                                            .writeMask = WGPUColorWriteMask_All,
                                        },
                                    },
@@ -306,24 +490,38 @@ int main(int argc, char *argv[]) {
                                .mask = 0xFFFFFFFF,
                            },
                    });
-  ASSERT_CHECK(render_pipeline);
-
-  demo.config = (WGPUSwapChainDescriptor){
-      .usage = WGPUTextureUsage_RenderAttachment,
-      .format = surface_preferred_format,
-      .presentMode = WGPUPresentMode_Fifo,
-  };
-
-  {
-    int width, height;
-    glfwGetWindowSize(window, &width, &height);
-    demo.config.width = width;
-    demo.config.height = height;
+    ASSERT_CHECK(render_pipeline);
   }
+  #pragma endregion
 
-  demo.swapchain =
-      wgpuDeviceCreateSwapChain(demo.device, demo.surface, &demo.config);
-  ASSERT_CHECK(demo.swapchain);
+  #pragma region index buffer
+  {    
+    uint16_t indices[] = {
+      0, 1, 2, 3, 0, 2
+    };
+    WGPUBufferDescriptor bufferDescriptor = (WGPUBufferDescriptor){
+      .size = sizeof(uint16_t) * 6,
+      .mappedAtCreation = true,
+      .usage = WGPUBufferUsage_Index | WGPUBufferUsage_CopyDst,
+    };
+    demo.indexBuffer = wgpuDeviceCreateBuffer(demo.device, &bufferDescriptor);
+    ASSERT_CHECK(demo.indexBuffer);
+    void* mapping = wgpuBufferGetMappedRange(demo.indexBuffer, 0, sizeof(uint16_t) * 6);
+    memcpy(mapping, indices, sizeof(uint16_t) * 6);
+    wgpuBufferUnmap(demo.indexBuffer);
+
+    //WGPUQueue queue = wgpuDeviceGetQueue(demo.device);
+
+    /*wgpuQueueWriteBuffer(queue, demo.indexBuffer, 0, &indices, sizeof(uint16_t) * 6);
+    WGPUCommandEncoder cmdEncoder = wgpuDeviceCreateCommandEncoder(demo.device, &(const WGPUCommandEncoderDescriptor){
+                         .label = "command_encoder",
+                     });
+    WGPUCommandBuffer cmdBuffer = wgpuCommandEncoderFinish(cmdEncoder, &(const WGPUCommandBufferDescriptor){
+                             .label = "command_buffer",
+                         });
+    wgpuQueueSubmit(queue, 1, &cmdBuffer);*/
+  }
+  #pragma endregion
 
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
@@ -350,7 +548,7 @@ int main(int argc, char *argv[]) {
                                          .clearValue =
                                              (const WGPUColor){
                                                  .r = 0.0,
-                                                 .g = 1.0,
+                                                 .g = 0.0,
                                                  .b = 0.0,
                                                  .a = 1.0,
                                              },
@@ -360,7 +558,9 @@ int main(int argc, char *argv[]) {
     ASSERT_CHECK(render_pass_encoder);
 
     wgpuRenderPassEncoderSetPipeline(render_pass_encoder, render_pipeline);
-    wgpuRenderPassEncoderDraw(render_pass_encoder, 3, 1, 0, 0);
+    wgpuRenderPassEncoderSetIndexBuffer(render_pass_encoder, demo.indexBuffer, WGPUIndexFormat_Uint16, 0, sizeof(uint16_t) * 6);
+    wgpuRenderPassEncoderSetBindGroup(render_pass_encoder, 0, demo.textureBindGroup, 0, NULL);
+    wgpuRenderPassEncoderDrawIndexed(render_pass_encoder, 6, 2, 0, 0, 0);
     wgpuRenderPassEncoderEnd(render_pass_encoder);
     // wgpuRenderPassEncoderEnd() drops render_pass_encoder
     render_pass_encoder = NULL;
@@ -381,6 +581,7 @@ int main(int argc, char *argv[]) {
     command_buffer = NULL;
 
     wgpuSwapChainPresent(demo.swapchain);
+    
   }
 
 cleanup_and_exit:
@@ -396,6 +597,16 @@ cleanup_and_exit:
     wgpuRenderPipelineDrop(render_pipeline);
   if (pipeline_layout)
     wgpuPipelineLayoutDrop(pipeline_layout);
+  if (demo.indexBuffer)
+    wgpuBufferDrop(demo.indexBuffer);
+  if (demo.wgpuTexture)
+  {
+    wgpuSamplerDrop(demo.sampler);
+    wgpuTextureDrop(demo.wgpuTexture);
+    wgpuTextureViewDrop(demo.wgpuTextureView);
+    free(demo.tbh.data);
+  }
+  
   if (shader_module)
     wgpuShaderModuleDrop(shader_module);
   if (demo.swapchain)
