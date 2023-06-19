@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "webgpu.h": "c",
+        "framework.h": "c"
+    }
+}
