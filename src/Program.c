@@ -30,6 +30,9 @@ struct demo {
   WGPUSampler sampler;
   WGPUBuffer indexBuffer;
   WGPUBuffer uniformBuffer;
+
+  int currentTexture;
+  WGPUTextureView *textureViews;
 };
 
 static void handle_request_adapter(WGPURequestAdapterStatus status,
@@ -68,6 +71,23 @@ static void handle_glfw_key(GLFWwindow *window, int key, int scancode,
                             int action, int mods) {
   UNUSED(scancode)
   UNUSED(mods)
+  if (key == GLFW_KEY_W && action == GLFW_PRESS) {
+    struct demo *demo = glfwGetWindowUserPointer(window);
+    if (!demo || !demo->instance)
+      return;
+    
+    if (demo->currentTexture == 0)
+    {
+      demo->textureViews[0] = demo->tbhSlime.view;
+      demo->currentTexture = 1;
+    }
+    else
+    {
+      demo->textureViews[0] = demo->tbh.view;
+      demo->currentTexture = 0;
+    }
+    printf("Switching texture\n");
+  }
   if (key == GLFW_KEY_R && (action == GLFW_PRESS || action == GLFW_REPEAT)) {
     struct demo *demo = glfwGetWindowUserPointer(window);
     if (!demo || !demo->instance)
@@ -335,6 +355,7 @@ int main(int argc, char *argv[]) {
       },
       .visibility = WGPUShaderStage_Fragment,
       .count = 2
+      //.count = 1
     },
     (WGPUBindGroupLayoutEntry) {
       .binding = 1,
@@ -362,25 +383,20 @@ int main(int argc, char *argv[]) {
   demo.bindGroupLayout = wgpuDeviceCreateBindGroupLayout(demo.device, &bindGroupLayoutDescriptor);
   ASSERT_CHECK(demo.bindGroupLayout);
 
-  WGPUTextureView textureViews[] = {
-      demo.tbh.view,
-      demo.tbh.view
-      };
+  demo.textureViews = malloc(sizeof(WGPUTextureView) * 2);
+  demo.textureViews[0] = demo.tbh.view;
+  demo.textureViews[1] = demo.tbhSlime.view;
 
   WGPUBindGroupEntry bindGroupEntries[] = {
     (WGPUBindGroupEntry) {
       .binding = 0,
-      .textureViewArray = textureViews,
+      .textureViewArray = demo.textureViews,
       .textureViewArrayLength = 2
     },
     (WGPUBindGroupEntry) {
       .binding = 1,
       .sampler = demo.sampler
-    }/*,
-    (WGPUBindGroupEntry) {
-      .binding = 2,
-      .buffer = demo.uniformBuffer
-    }*/
+    }
   };
 
   WGPUBindGroupDescriptor bindGroupDescriptor = (WGPUBindGroupDescriptor){
@@ -468,17 +484,6 @@ int main(int argc, char *argv[]) {
     void* mapping = wgpuBufferGetMappedRange(demo.indexBuffer, 0, sizeof(uint16_t) * 6);
     memcpy(mapping, indices, sizeof(uint16_t) * 6);
     wgpuBufferUnmap(demo.indexBuffer);
-
-    //WGPUQueue queue = wgpuDeviceGetQueue(demo.device);
-
-    /*wgpuQueueWriteBuffer(queue, demo.indexBuffer, 0, &indices, sizeof(uint16_t) * 6);
-    WGPUCommandEncoder cmdEncoder = wgpuDeviceCreateCommandEncoder(demo.device, &(const WGPUCommandEncoderDescriptor){
-                         .label = "command_encoder",
-                     });
-    WGPUCommandBuffer cmdBuffer = wgpuCommandEncoderFinish(cmdEncoder, &(const WGPUCommandBufferDescriptor){
-                             .label = "command_buffer",
-                         });
-    wgpuQueueSubmit(queue, 1, &cmdBuffer);*/
   }
   #pragma endregion
 
@@ -562,6 +567,8 @@ cleanup_and_exit:
     wgpuBufferDrop(demo.indexBuffer);
   if (demo.sampler)
     wgpuSamplerDrop(demo.sampler);
+  if (demo.textureViews)
+    free(demo.textureViews);
   if (demo.tbh.data)
   {
     wgpuTextureDrop(demo.tbh.texture);
