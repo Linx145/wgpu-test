@@ -42,5 +42,9 @@ fn vs_main(
 
 @fragment
 fn fs_main(input: FragmentInputs) -> @location(0) vec4<f32> {
-    return textureSample(t[0], s, input.tex_coord);
+    var index: i32 = 0;
+    if (input.tex_coord.x > 0.5){
+        index = 1;
+    }
+    return textureSample(t[index], s, input.tex_coord);
 }

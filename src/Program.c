@@ -238,7 +238,7 @@ int main(int argc, char *argv[]) {
                     const WGPUSurfaceDescriptorFromWindowsHWND){
                     .chain =
                         (const WGPUChainedStruct){
-                            .sType = WGPUSType_SurfaceDescriptorFromWindowsHWND,
+                            .sType = WGPUSType_SurfaceDescriptorFromWindowsHWND
                         },
                     .hinstance = hinstance,
                     .hwnd = hwnd,
@@ -257,10 +257,10 @@ int main(int argc, char *argv[]) {
                              handle_request_adapter, &demo);
   ASSERT_CHECK(demo.adapter);
 
-  WGPUNativeFeature requiredFeatures = WGPUNativeFeature_TextureBindingArray;
+  WGPUNativeFeature requiredFeatures[] = {WGPUNativeFeature_TextureBindingArray, WGPUNativeFeature_SampledTextureAndStorageBufferArrayNonUniformIndexing};
 
   wgpuAdapterRequestDevice(demo.adapter, &(WGPUDeviceDescriptor){
-    .requiredFeaturesCount = 1,
+    .requiredFeaturesCount = 2,
     .requiredFeatures = &requiredFeatures
   }, handle_request_device, &demo);
   ASSERT_CHECK(demo.device);
